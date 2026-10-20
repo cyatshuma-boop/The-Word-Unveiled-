@@ -264,6 +264,153 @@ $('menuStudy').addEventListener('click',()=>{if(!selectedWord)return;const picke
 $('menuHighlight').addEventListener('click',()=>{$('highlightPalette').classList.toggle('hidden')});
 $('highlightPalette').addEventListener('click',e=>{const b=e.target.closest('[data-color]');if(!b||!selectedWord)return;const key=`${selectedWord.ref}|${selectedWord.token}`;if(b.dataset.color)savedHighlights[key]=b.dataset.color;else delete savedHighlights[key];saveHighlights();const ref=selectedWord.ref;closeWordMenu();if(activeTab==='read')readChapter();else if(activeTab==='saved')setTab('saved');else renderPage($('query').value||'');});
 document.addEventListener('click',e=>{if(!$('wordMenu').contains(e.target)&&!e.target.closest('.study-word'))closeWordMenu()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeWordMenu()});window.addEventListener('resize',closeWordMenu);document.querySelectorAll('[data-query]').forEach(b=>b.addEventListener('click',()=>{$('query').value=b.dataset.query;setTab('search');doSearch(b.dataset.query)}));document.querySelectorAll('[data-study]').forEach(b=>b.addEventListener('click',()=>{$('studyQuery').value=b.dataset.study;setTab('study');showStudy(b.dataset.study)}));$('studyButton').addEventListener('click',()=>showStudy($('studyQuery').value));$('studyQuery').addEventListener('keydown',e=>{if(e.key==='Enter')showStudy(e.target.value)});$('bookSelect').addEventListener('change',fillChapters);$('readButton').addEventListener('click',readChapter);document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>setTab(b.dataset.tab)));$('prevPage').addEventListener('click',()=>{if(page>0){page--;renderPage($('query').value)}});$('nextPage').addEventListener('click',()=>{if((page+1)*PAGE_SIZE<currentResults.length){page++;renderPage($('query').value)}});
+
+/* Phrase and sentence highlighting */
+(function addPhraseHighlighting(){
+  const menuActions = document.querySelector('.word-menu-actions');
+  const menu = document.getElementById('wordMenu');
+  if (!menuActions || !menu) return;
+
+  const style = document.createElement('style');
+  style.textContent = `
+    .phrase-picked {
+      outline: 2px solid #164e8a !important;
+      outline-offset: 2px;
+      border-radius: 3px;
+    }
+    #phraseToolbar {
+      position: fixed;
+      z-index: 3000;
+      left: 12px;
+      right: 12px;
+      bottom: calc(90px + env(safe-area-inset-bottom));
+      max-width: 480px;
+      margin: auto;
+      padding: 14px;
+      background: var(--paper, white);
+      color: var(--ink, #172b43);
+      border: 1px solid var(--line, #dbe5f0);
+      border-radius: 14px;
+      box-shadow: 0 8px 30px #0003;
+    }
+    #phraseToolbar button {
+      border: 1px solid #dbe5f0;
+      border-radius: 9px;
+      padding: 9px 12px;
+      margin: 4px;
+      background: #eaf2fb;
+      color: #172b43;
+      font-weight: 700;
+    }
+    #phraseToolbar [data-phrase-color="#f4d88d"] { background:#f4d88d }
+    #phraseToolbar [data-phrase-color="#b8e0bd"] { background:#b8e0bd }
+    #phraseToolbar [data-phrase-color="#b8d8f4"] { background:#b8d8f4 }
+    #phraseToolbar [data-phrase-color="#f3bfd3"] { background:#f3bfd3 }
+  `;
+  document.head.appendChild(style);
+
+  const phraseButton = document.createElement('button');
+  phraseButton.type = 'button';
+  phraseButton.textContent = 'Select phrase';
+  menuActions.appendChild(phraseButton);
+
+  const toolbar = document.createElement('div');
+  toolbar.id = 'phraseToolbar';
+  toolbar.hidden = true;
+  toolbar.innerHTML = `
+    <strong>Select a phrase or sentence</strong>
+    <p id="phraseStatus" style="font-size:13px;margin:6px 0">
+      Tap words in the same verse, then choose a colour.
+    </p>
+    <div>
+      <button type="button" data-phrase-color="#f4d88d">Yellow</button>
+      <button type="button" data-phrase-color="#b8e0bd">Green</button>
+      <button type="button" data-phrase-color="#b8d8f4">Blue</button>
+      <button type="button" data-phrase-color="#f3bfd3">Pink</button>
+      <button type="button" data-phrase-color="">Remove</button>
+    </div>
+    <button type="button" id="phraseCancel">Cancel</button>
+  `;
+  document.body.appendChild(toolbar);
+
+  let selecting = false;
+  let phraseRef = '';
+  let chosen = new Map();
+
+  function clearSelectionStyles() {
+    document.querySelectorAll('.phrase-picked').forEach(el => {
+      el.classList.remove('phrase-picked');
+    });
+  }
+
+  function finishSelection() {
+    selecting = false;
+    phraseRef = '';
+    chosen.clear();
+    clearSelectionStyles();
+    toolbar.hidden = true;
+  }
+
+  phraseButton.addEventListener('click', () => {
+    if (!selectedWord) return;
+    phraseRef = selectedWord.ref;
+    chosen.clear();
+    clearSelectionStyles();
+    selecting = true;
+    closeWordMenu();
+    toolbar.hidden = false;
+    $('phraseStatus').textContent =
+      'Tap each word you want to include. All selected words must be in the same verse.';
+  });
+
+  document.addEventListener('click', event => {
+    if (!selecting) return;
+
+    const word = event.target.closest('.study-word');
+    if (!word) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    if (word.dataset.ref !== phraseRef) {
+      $('phraseStatus').textContent =
+        'Please select words from the same verse. Cancel to start another phrase.';
+      return;
+    }
+
+    const token = word.dataset.token;
+    if (chosen.has(token)) {
+      chosen.delete(token);
+      word.classList.remove('phrase-picked');
+    } else {
+      chosen.set(token, word);
+      word.classList.add('phrase-picked');
+    }
+
+    $('phraseStatus').textContent =
+      `${chosen.size} word${chosen.size === 1 ? '' : 's'} selected. Choose a colour to save.`;
+  }, true);
+
+  toolbar.addEventListener('click', event => {
+    const button = event.target.closest('[data-phrase-color]');
+    if (!button || !selecting || chosen.size === 0) return;
+
+    const color = button.dataset.phraseColor;
+
+    chosen.forEach((word, token) => {
+      const key = `${phraseRef}|${token}`;
+      if (color) savedHighlights[key] = color;
+      else delete savedHighlights[key];
+    });
+
+    saveHighlights();
+    finishSelection();
+    renderPage($('query').value || '');
+  });
+
+  $('phraseCancel').addEventListener('click', finishSelection);
+})();
+
 saveSaved();
 async function startApp(){if('serviceWorker' in navigator && location.protocol.startsWith('http')){try{await navigator.serviceWorker.register('./service-worker.js');await navigator.serviceWorker.ready;}catch(e){}}loadBible();}
 startApp();
